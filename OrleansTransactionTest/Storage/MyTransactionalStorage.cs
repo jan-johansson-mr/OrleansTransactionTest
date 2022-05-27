@@ -51,32 +51,32 @@ internal class MyTransactionalStorage<TState> : ITransactionalStateStorage<TStat
         // abort
         if (abortAfter.HasValue && pendingStates.Count != 0)
         {
-            var position = pendingStates.FindIndex(pendingState => pendingState.SequenceId > abortAfter.Value);
+            var index = pendingStates.FindIndex(pendingState => pendingState.SequenceId > abortAfter.Value);
 
-            if (position != -1)
+            if (index != -1)
             {
-                pendingStates.RemoveRange(position, pendingStates.Count - position);
+                pendingStates.RemoveRange(index, pendingStates.Count - index);
             }
         }
 
         // prepare
         if (statesToPrepare?.Count > 0)
         {
-            foreach (var pendingItem in statesToPrepare)
+            foreach (var stateToPrepare in statesToPrepare)
             {
-                var position = pendingStates.FindIndex(pendingState => pendingState.SequenceId >= pendingItem.SequenceId);
+                var index = pendingStates.FindIndex(pendingState => pendingState.SequenceId >= stateToPrepare.SequenceId);
 
-                if (position == -1)
+                if (index == -1)
                 {
-                    pendingStates.Add(pendingItem); //append
+                    pendingStates.Add(stateToPrepare); //append
                 }
-                else if (pendingStates[position].SequenceId == pendingItem.SequenceId)
+                else if (pendingStates[index].SequenceId == stateToPrepare.SequenceId)
                 {
-                    pendingStates[position] = pendingItem;  //replace
+                    pendingStates[index] = stateToPrepare;  //replace
                 }
                 else
                 {
-                    pendingStates.Insert(position, pendingItem); //insert
+                    pendingStates.Insert(index, stateToPrepare); //insert
                 }
             }
         }
@@ -84,14 +84,14 @@ internal class MyTransactionalStorage<TState> : ITransactionalStateStorage<TStat
         // commit
         if (commitUpTo.HasValue && commitUpTo.Value > _record.CommittedSequenceId)
         {
-            var position = pendingStates.FindIndex(pendingItem => pendingItem.SequenceId == commitUpTo.Value);
+            var index = pendingStates.FindIndex(pendingItem => pendingItem.SequenceId == commitUpTo.Value);
 
-            if (position != -1)
+            if (index != -1)
             {
-                var committedState = pendingStates[position];
+                var committedState = pendingStates[index];
                 _record.CommittedSequenceId = committedState.SequenceId;
                 _record.CommittedState = committedState.State;
-                pendingStates.RemoveRange(0, position + 1);
+                pendingStates.RemoveRange(0, index + 1);
                 return Task.FromResult(_eTag = Guid.NewGuid().ToString("N"));
             }
             else
