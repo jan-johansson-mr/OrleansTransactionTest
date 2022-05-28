@@ -1,6 +1,4 @@
 ﻿using Orleans.Runtime;
-using Orleans.Storage;
-using Orleans.Transactions;
 using Orleans.Transactions.Abstractions;
 
 namespace OrleansTransactionTest.Storage;
@@ -8,16 +6,13 @@ namespace OrleansTransactionTest.Storage;
 internal class MyTransactionalStorage<TState> : ITransactionalStateStorage<TState> where TState : class, new()
 {
     private readonly IGrainContext _context;
-    private readonly IGrainStorageSerializer _serializer;
-    private readonly TransactionalStateRecord<TState> _record;
+    private readonly List<PendingTransactionState<TState>> _pendingStates = new();
 
     private string _eTag = string.Empty;
 
-    public MyTransactionalStorage(string _, IGrainContext context, IGrainStorageSerializer serializer)
+    public MyTransactionalStorage(string _, IGrainContext context)
     {
         _context = context;
-        _serializer = serializer;
-        _record = new TransactionalStateRecord<TState>();
     }
 
     public Task<TransactionalStorageLoadResponse<TState>> Load()
@@ -25,10 +20,10 @@ internal class MyTransactionalStorage<TState> : ITransactionalStateStorage<TStat
         _eTag = Guid.NewGuid().ToString("N");
 
         var response = new TransactionalStorageLoadResponse<TState>(_eTag
-            , _record.CommittedState
-            , _record.CommittedSequenceId
-            , _record.Metadata
-            , _record.PendingStates);
+            , new TState()
+            , 0L
+            , new TransactionalStateMetaData()
+            , _pendingStates);
 
         return Task.FromResult(response);
     }
@@ -44,18 +39,14 @@ internal class MyTransactionalStorage<TState> : ITransactionalStateStorage<TStat
             throw new ArgumentException("Etag does not match", nameof(expectedETag));
         }
 
-        _record.Metadata = metadata;
-
-        var pendingStates = _record.PendingStates;
-
         // abort
-        if (abortAfter.HasValue && pendingStates.Count != 0)
+        if (abortAfter.HasValue && _pendingStates.Count != 0)
         {
-            var index = pendingStates.FindIndex(pendingState => pendingState.SequenceId > abortAfter.Value);
+            var index = _pendingStates.FindIndex(pendingState => pendingState.SequenceId > abortAfter.Value);
 
             if (index != -1)
             {
-                pendingStates.RemoveRange(index, pendingStates.Count - index);
+                _pendingStates.RemoveRange(index, _pendingStates.Count - index);
             }
         }
 
@@ -64,37 +55,35 @@ internal class MyTransactionalStorage<TState> : ITransactionalStateStorage<TStat
         {
             foreach (var stateToPrepare in statesToPrepare)
             {
-                var index = pendingStates.FindIndex(pendingState => pendingState.SequenceId >= stateToPrepare.SequenceId);
+                var index = _pendingStates.FindIndex(pendingState => pendingState.SequenceId >= stateToPrepare.SequenceId);
 
                 if (index == -1)
                 {
-                    pendingStates.Add(stateToPrepare); //append
+                    _pendingStates.Add(stateToPrepare); //append
                 }
-                else if (pendingStates[index].SequenceId == stateToPrepare.SequenceId)
+                else if (_pendingStates[index].SequenceId == stateToPrepare.SequenceId)
                 {
-                    pendingStates[index] = stateToPrepare;  //replace
+                    _pendingStates[index] = stateToPrepare;  //replace
                 }
                 else
                 {
-                    pendingStates.Insert(index, stateToPrepare); //insert
+                    _pendingStates.Insert(index, stateToPrepare); //insert
                 }
             }
         }
 
         // commit
-        if (commitUpTo.HasValue && commitUpTo.Value > _record.CommittedSequenceId)
+        if (commitUpTo.HasValue)
         {
-            var index = pendingStates.FindIndex(pendingItem => pendingItem.SequenceId == commitUpTo.Value);
+            var index = _pendingStates.FindIndex(pendingState => pendingState.SequenceId == commitUpTo.Value);
 
             if (index != -1)
             {
-                var committedState = pendingStates[index];
-                _record.CommittedSequenceId = committedState.SequenceId;
-                _record.CommittedState = committedState.State;
-                pendingStates.RemoveRange(0, index + 1);
-                return Task.FromResult(_eTag = Guid.NewGuid().ToString("N"));
+                var committedState = _pendingStates[index];
+                _pendingStates.RemoveRange(0, index + 1);
+                _eTag = Guid.NewGuid().ToString("N");
             }
-            else
+            else if (commitUpTo.Value < _pendingStates.Select(pendingState => pendingState.SequenceId).Max())
             {
                 throw new InvalidOperationException($"Transactional state corrupted. Missing prepared record (SequenceId={commitUpTo.Value}) for committed transaction.");
             }

@@ -4,7 +4,6 @@ using Microsoft.Extensions.Hosting;
 using Orleans;
 using Orleans.Hosting;
 using Orleans.Runtime;
-using Orleans.Storage;
 using Orleans.Transactions.Abstractions;
 
 using OrleansTransactionTest.Contracts;
@@ -26,7 +25,7 @@ namespace OrleansTransactionTest
                 {
                     services.AddSingletonNamedService<ITransactionalStateStorageFactory>("TransactionStore", (provider, name) =>
                     {
-                        return new MyTransactionalStateStorageFactory(provider.GetRequiredService<IGrainStorageSerializer>());
+                        return new MyTransactionalStateStorageFactory();
                     });
                 })
                 .Build();
@@ -71,6 +70,16 @@ namespace OrleansTransactionTest
                 //await Task.Delay(100);
                 await grain.SetName("First name", "Last name");
             }
+
+            firstName = await firstGrain.GetName();
+            lastName = await secondGrain.GetName();
+
+            Console.WriteLine($"First name '{firstName}', last name '{lastName}'");
+
+            await grain.SetName("First", "Last");
+
+            firstGrain = factory.GetGrain<IMyFirstGrain>(id);
+            secondGrain = factory.GetGrain<IMySecondGrain>(id);
 
             firstName = await firstGrain.GetName();
             lastName = await secondGrain.GetName();
